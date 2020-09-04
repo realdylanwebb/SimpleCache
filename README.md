@@ -32,23 +32,23 @@ This is very much a work in progress, and is not yet ready for production usage.
 ## How to Use
 
 Create the SimplyCache object.
-```
+```javascript
 const sc = require("simplycache");
 cache = new sc();
 ```
 
 Caching a file:
-```
+```javascript
 let cacheStream = sc.cache(filePath);
 ```
 
 Retrieving a file that may or may not be in the cache:
-```
+```javascript
 let cacheStream = sc.stream(filePath);
 ```
 
 Removing one or all files:
-```
+```javascript
 //Removing one file
 sc.purge(filePath);
 //Removing all files
