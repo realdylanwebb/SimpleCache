@@ -1,10 +1,10 @@
 # SimpleCache
 A stream based LRU and explicit cache for NodeJS
 
-##Notice
+## Notice
 This is still a work in progress and is not ready for production usage.
 
-##How to Use
+## How to Use
 
 Create the SimplyCache object.
 ```
