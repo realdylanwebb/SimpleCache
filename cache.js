@@ -5,7 +5,6 @@
 *
 *   Design Goals
 *   *Implements the stream.Duplex interface
-*   *No data copies
 *   *Simple, highly configurable interface with one options object.
 *   *Great error handling
 *   *Can explicitly cache files
@@ -16,33 +15,49 @@
 *
 *   API
 *   Class SimplyCache(?options)
-*   sc.stream(path)::CacheStream{instanceOf(stream.Duplex)}
-*   sc.cache(path)::promise::resolve->null::reject->error
-*   sc.purge(?path)::err | null
+*   sc.stream(path)::Object CacheStream, extends stream.Duplex | error
+*   sc.cache(path)::Object CacheStream, extends stream.Duplex | error
+*   sc.purge(?path)::null | error
 *
 *   This module aims to provide a robust and easy to use caching system.
-*   It implements all JS control-flow styles except for callbacks :).
-*   Maybe in a future version it will do that too.
+*   Under the hood, there is an LRU cache and an explicit cache.
+*   The LRU cache is used implicitly whenever a file that is not already cached
+*   is requested by SimplyCache.stream(path).
+*   Files that are explicitly cached using SimplyCache.cache(path) will be ignored by the LRU cache.
 */
 
 /* jshint esversion:9 */
 
 const stream = require("stream");
 const fs = require("fs");
+const { StringDecoder } = require("string_decoder");
 const kSource = Symbol("source");
 
+
 /*
-*   tPipeline is a interface used to transform file data before caching.
-*   tPipeline is to accept a file path as it's first constructor argument,
-*   and is to implement the stream Readable, Duplex, Transform, or Passthrough interface.   
+*   OPTIONS:
+*
+*   pipelineV::[implements stream.Duplex], default null.
+*   a vector of duplex streams to pipe the file through before caching,
+*   useful for, but not limited to, compression streams and sanitizing file data.
+*
+*   maxFiles::int, default 10.
+*   The maximum amount of files that can exist in the LRU portion of the cache before
+*   purging the least recently used.
+*   This option does not limit the amount of files cached by SimplyCache.cache(path),
+*   only files cached implicitly by SimplyCache.stream(path).
+*
+*   ChunkSize::int, default 256.
+*   Buffer size per chunk from the readable end of a simplycache stream.
 */
 
 class SimplyCache {
-    constructor(options, {tPipeline = null}) {
+    constructor({pipelineV = null, chunkSize=256, maxFiles=10}) {
         this.map = new Map();
         this.lru = [];
-        this.maxFiles = options.maxFiles;
-        this.tPipeline = tPipeline; 
+        this.maxFiles = maxFiles;
+        this.chunkSize = chunkSize;
+        this.pipelineV = pipelineV; 
     }
 
     async _checkPurge() {
@@ -74,11 +89,10 @@ class SimplyCache {
         } else {
             /* CACHE THE FILE */
             let cached = new CacheStream(null);
+            let rs = fs.createReadStream(path);
             if (this.tPipeline !== null) {
-                let ts = new this.tPipeline(path);
-                ts.pipe(cached);
+                stream.pipeline(rs, this.pipelineV, cached);
             } else {
-                let rs = fs.createReadStream(path);
                 rs.pipe(cached);
             }
             this.map.set(path, cached);
@@ -91,11 +105,10 @@ class SimplyCache {
 
     async cache(path) {
         let cached = new CacheStream(null);
-        if (this.tPipeline !== null) {
-            let ts = new this.tPipeline(path);
-            ts.pipe(cached);
+        let rs = fs.createReadStream(path);
+        if (this.pipelineV !== null) {
+            stream.pipeline(rs, this.pipelineV, cached);
         } else {
-            let rs = fs.createReadStream(path);
             rs.pipe(cached);
         }
         this.map.set(path, cached);
@@ -125,17 +138,23 @@ class SimplyCache {
 }
 
 
-/* Read it and weep nerd */
 class CacheStream extends stream.Duplex {
     constructor(options) {
         super(options);
+        this._decoder = new StringDecoder(options && options.defaultEncoding);
+        this.buffer = Buffer.alloc(0);
         this.offset = 0;
     }
 
     /* SEE STREAM WRITABLE */
 
+    //THIS PART IS A MESS AND PERFORMS TERRIBLY I WILL FIX SOON
     _write(chunk, encoding, callback) {
-
+        if (encoding === "buffer") {
+            chunk = this._decoder.write(chunk);
+        }
+        this.buffer = Buffer.concat([this.buffer, chunk]);
+        callback();
     }
 
     _writev(chunks, callback) {
@@ -143,7 +162,8 @@ class CacheStream extends stream.Duplex {
     }
 
     _final(callback) {
-
+        this.buffer = Buffer.concat([this.buffer, this._decoder.end()]);
+        callback();
     }
 
     /* SEE STREAM READABLE */
