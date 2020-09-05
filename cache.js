@@ -31,7 +31,6 @@
 const stream = require("stream");
 const fs = require("fs");
 const { StringDecoder } = require("string_decoder");
-const kSource = Symbol("source");
 
 
 /*
@@ -142,27 +141,35 @@ class CacheStream extends stream.Duplex {
     constructor(options) {
         super(options);
         this._decoder = new StringDecoder(options && options.defaultEncoding);
-        this.buffer = Buffer.alloc(0);
-        this.offset = 0;
+        this._bufferV = [];
+        this._currentWriteEncoding = null;
+        this._readOffset = 0;
     }
 
     /* SEE STREAM WRITABLE */
 
-    //THIS PART IS A MESS AND PERFORMS TERRIBLY I WILL FIX SOON
     _write(chunk, encoding, callback) {
+        this._currentWriteEncoding = encoding;
         if (encoding === "buffer") {
             chunk = this._decoder.write(chunk);
         }
-        this.buffer = Buffer.concat([this.buffer, chunk]);
+        this._bufferV.push(chunk);
         callback();
     }
 
     _writev(chunks, callback) {
-
+        chunks.forEach(chunk => {
+            if (this._currentWriteEncoding === "buffer") {
+                chunk = this._decoder.write(chunk);
+            }
+            this._bufferV.push(chunk);
+        });
+        callback();
     }
 
     _final(callback) {
         this.buffer = Buffer.concat([this.buffer, this._decoder.end()]);
+        this._currentWriteEncoding = null;
         callback();
     }
 
